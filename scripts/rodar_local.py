@@ -5,6 +5,8 @@ Não é necessário para usar no Databricks. Serve para conferir a lógica no se
     pip install -r requirements-local.txt      # precisa de Java 17+
     python scripts/rodar_local.py
 
+No fim, roda as consultas de dashboards/consultas.sql (cada uma precisa devolver linhas).
+
 O que ele faz: lê cada notebook .py, separa as células (# COMMAND ----------), ignora as células
 de Markdown (# MAGIC %md), troca "%run ./_config" pelo conteúdo do _config e executa tudo com uma
 SparkSession local. O catálogo fica vazio (tabelas "industrial.<nome>") e o volume vira uma pasta temporária.
@@ -35,6 +37,22 @@ def celulas(caminho: Path) -> list[str]:
         else:
             saida.append("\n".join(linhas))
     return saida
+
+
+def rodar_consultas(spark) -> None:
+    """Executa cada consulta de dashboards/consultas.sql (troca workspace.industrial. por industrial.)."""
+    arquivo = RAIZ / "dashboards" / "consultas.sql"
+    if not arquivo.exists():
+        return
+    texto = "\n".join(ln for ln in arquivo.read_text(encoding="utf-8").splitlines() if not ln.strip().startswith("--"))
+    schema = os.environ.get("PI_SCHEMA", "industrial")
+    for i, sql in enumerate((c.strip() for c in texto.split(";")), start=1):
+        if not sql:
+            continue
+        print(f"\n===== consulta [{i}] =====", flush=True)
+        df = spark.sql(sql.replace("workspace.industrial.", f"{schema}."))
+        assert df.count() > 0, f"consulta [{i}] não devolveu linhas"
+        df.show(30, truncate=False)
 
 
 def main() -> None:
@@ -73,6 +91,7 @@ def main() -> None:
             escopo = {"spark": spark, "display": display, "__name__": "__notebook__"}
             for codigo in celulas(PASTA_NOTEBOOKS / f"{nome}.py"):
                 exec(compile(codigo, f"{nome}.py", "exec"), escopo)  # noqa: S102 (código do próprio repo)
+        rodar_consultas(spark)
     finally:
         spark.stop()
     print("\nOK: todos os notebooks rodaram localmente.")

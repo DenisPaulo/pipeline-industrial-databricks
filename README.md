@@ -53,6 +53,7 @@ Rode **na ordem**:
 | [`02_silver`](notebooks/02_silver.py) | Limpeza com as mesmas 8 regras do repositório base (um motivo por linha), tipagem, duplicadas, faixas físicas; grava `silver_leituras`, `silver_falhas`, `silver_descartes` |
 | [`03_gold`](notebooks/03_gold.py) | Star schema equivalente ao dbt: `gold_dim_maquina`, `gold_fct_leituras`, `gold_fct_falhas_diarias` |
 | [`04_qualidade`](notebooks/04_qualidade.py) | 17 checagens (volume, conservação entre camadas, nulos, unicidade, relacionamento, valores aceitos, freshness) que **falham com `assert`**; compara com os números do repositório base |
+| [`dashboards/consultas.sql`](dashboards/consultas.sql) | 6 consultas SQL do AI/BI Dashboard (veja a seção Dashboard) |
 | [`_config`](notebooks/_config.py) | Nomes e regras compartilhados (carregado pelos outros com `%run ./_config`) |
 | [`simulador.py`](notebooks/simulador.py) | Gerador das leituras simuladas (cópia do repositório base) |
 
@@ -154,6 +155,45 @@ databricks bundle run pipeline_industrial        # roda e mostra o resultado
 No modo `development`, o bundle envia os arquivos para uma pasta própria e cria um Job com o prefixo
 `[dev ...]`, sem mexer no Job criado pela interface.
 
+## Dashboard (AI/BI)
+
+Um **AI/BI Dashboard** é um painel do próprio Databricks: você escreve consultas SQL (os *datasets*)
+e monta gráficos em cima delas, sem instalar nada. As 6 consultas estão em
+[`dashboards/consultas.sql`](dashboards/consultas.sql) e foram testadas no teste local/CI
+(cada uma precisa devolver linhas).
+
+| # | Dataset | O que mostra | Gráfico sugerido |
+|---|---|---|---|
+| 1 | `kpis` | total de leituras, leituras com falha, taxa de falha (%), nº de máquinas | 4 × **Counter** |
+| 2 | `falhas_por_dia` | falhas por dia, separadas por fonte | **Bar** (X `data_ref`, Y `falhas`, cor `fonte`) |
+| 3 | `top10_maquinas` | as 10 máquinas com mais falhas | **Bar** horizontal (Y `id_maquina`, X `total_falhas`) |
+| 4 | `falhas_por_modo` | registros por modo de falha (TWF, HDF, PWF, OSF, RNF, DESCONHECIDO) | **Pie** ou **Bar** |
+| 5 | `descartes_por_motivo` | linhas descartadas na silver por motivo | **Bar** (X `motivo`, Y `linhas`) |
+| 6 | `ultima_carga` | quando foi a última carga e quantas horas faz | **Counter** (`horas_desde_carga`) ou **Table** |
+
+Com os dados padrão: 24.511 leituras, 556 com falha, **2,27%**, 18 máquinas.
+
+### Passo a passo
+
+1. Rode antes os notebooks 00 a 03 (ou o Job), para as tabelas existirem.
+2. Menu da esquerda › **Dashboards** › **Create dashboard**. Dê um nome, por exemplo `pipeline-industrial`.
+3. No topo, confira o **SQL warehouse** (no Free Edition há um warehouse serverless pronto para uso).
+4. Aba **Data** › **Create from SQL**. Cole a consulta **[1]** de `dashboards/consultas.sql`, clique em
+   **Run** e renomeie o dataset para `kpis`. Repita para as consultas [2] a [6] (um dataset cada).
+5. Aba **Canvas** › **Add a visualization** (ou o ícone de gráfico na barra de baixo). Clique no
+   espaço do painel, escolha o **Dataset** e o tipo de gráfico da tabela acima, e arraste os campos
+   para X, Y e cor. Para os KPIs, use **Counter** e escolha a coluna (ex.: `taxa_falha_pct`).
+6. Opcional: **Add a text box** para um título, e organize os gráficos arrastando.
+7. **Publish** (canto superior direito). A versão publicada é a que outras pessoas veem.
+
+### Atualizar o dashboard pelo Job
+
+Para o painel ser atualizado logo depois do pipeline: no Job `pipeline-industrial`, **+ Add task**,
+escolha o tipo **Dashboard** (se aparecer a opção no seu workspace), selecione o dashboard publicado e o
+SQL warehouse, e em **Depends on** escolha `qualidade`. Assim o painel só atualiza se todas as
+checagens do `04_qualidade` passarem. Se o tipo **Dashboard** não aparecer, use o agendamento do próprio
+dashboard: **Schedule** › **Add schedule** (por exemplo, todo dia depois do horário do Job).
+
 ## Relação com o repositório base
 
 | | [pipeline-dados-industriais](https://github.com/DenisPaulo/pipeline-dados-industriais) (base) | Este repositório (V4) |
@@ -169,7 +209,7 @@ Faz parte da estratégia de portfólio: um repositório por tecnologia, todos co
 
 ## Teste local (sem Databricks)
 
-O CI roda os 5 notebooks com PySpark + Delta Lake locais e exige os mesmos números do repositório base.
+O CI roda os 5 notebooks com PySpark + Delta Lake locais, exige os mesmos números do repositório base e executa as consultas do dashboard.
 Para rodar no seu PC (precisa de **Java 17+** e ~1 GB de RAM livre):
 
 ```bash
