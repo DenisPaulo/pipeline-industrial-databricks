@@ -1,0 +1,16 @@
+# Databricks Asset Bundle (DAB): descreve o Job em código, para criar/atualizar com a CLI.
+# Uso (opcional; o Job também pode ser criado pela interface, veja o README):
+#   databricks bundle validate
+#   databricks bundle deploy
+#   databricks bundle run pipeline_industrial
+bundle:
+  name: pipeline-industrial-databricks
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    # "development": o Job ganha o prefixo "[dev seu_usuario]" e o agendamento fica pausado.
+    mode: development
+    default: true

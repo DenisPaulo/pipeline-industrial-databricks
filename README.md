@@ -81,14 +81,9 @@ Tudo pode ser rodado de novo: bronze, silver e gold são sobrescritas; só `carg
 
 Para atualizar depois de um `git push`: abra o Git folder, clique no nome do branch (`main`) e em **Pull**.
 
-### Opcional: agendar como Job
+## Resultado esperado
 
-**Jobs & Pipelines › Create › Job**, uma tarefa por notebook (00 → 04) encadeadas, compute
-**Serverless**, agendamento diário. É o equivalente à DAG do Airflow do repositório base.
-
-## Resultado esperado (verificado)
-
-Mesma entrada do repositório base (AI4I + simulado com semente 42) ⇒ mesmos números:
+Mesma entrada do repositório base (AI4I + simulado com semente 42) ⇒ mesmos números (no teste local/CI **e** no Databricks):
 
 | Medida | Valor |
 |---|---|
@@ -100,6 +95,65 @@ Mesma entrada do repositório base (AI4I + simulado com semente 42) ⇒ mesmos n
 | `gold_fct_leituras` | 24.511 |
 | `gold_fct_falhas_diarias` | 123 (soma de `qtd_falhas` = 556) |
 
+## Executado no Databricks Free Edition
+
+Os 5 notebooks foram importados por **Git folder** e rodados no **Databricks Free Edition**
+(compute Serverless, Unity Catalog `workspace.industrial`) em **17/10/2026**:
+
+- Todos os notebooks terminaram sem erro; o `04_qualidade` passou nas checagens.
+- A comparação com o repositório base deu **igual** nas 5 medidas (24.511 leituras, 586 registros de
+  falha, 18 máquinas, 123 linhas em `fct_falhas_diarias`, soma 556).
+- O Job `pipeline-industrial` (setup → bronze → silver → gold → qualidade) rodou com **Succeeded**
+  em **2 min 25 s** (execução manual de 17/10/2026, 15h14, horário de Brasília).
+
+**Job no Databricks** (as 5 tarefas verdes):
+
+![Job pipeline-industrial no Databricks: execução Succeeded em 2m25s](docs/img/job_databricks.png)
+
+**Comparação do `04_qualidade` com o repositório base:**
+
+![04_qualidade no Databricks: as 5 medidas iguais ao repositório base](docs/img/qualidade_databricks.png)
+
+## Como criar o Job (orquestração no Databricks)
+
+Um **Job** roda os notebooks em sequência, como a DAG do Airflow no repositório base.
+Se uma tarefa falhar (por exemplo, um `assert` do `04_qualidade`), as seguintes não rodam e a
+execução fica vermelha.
+
+1. Menu da esquerda › **Jobs & Pipelines** › **Create** › **Job**. Dê o nome `pipeline-industrial`.
+2. Primeira tarefa: **Task name** `setup`, **Type** `Notebook`, **Source** `Workspace`,
+   **Path** = `notebooks/00_setup` dentro do seu Git folder, **Compute** `Serverless`. **Create task**.
+3. Clique em **+ Add task › Notebook** para cada uma das outras, sempre com **Depends on** apontando
+   para a anterior:
+
+| Tarefa | Notebook | Depende de |
+|---|---|---|
+| `setup` | `notebooks/00_setup` | — |
+| `bronze` | `notebooks/01_bronze` | `setup` |
+| `silver` | `notebooks/02_silver` | `bronze` |
+| `gold` | `notebooks/03_gold` | `silver` |
+| `qualidade` | `notebooks/04_qualidade` | `gold` |
+
+4. **Run now** para testar. Para rodar todo dia: **Schedules & Triggers › Add trigger › Scheduled**.
+
+### Job como código (Databricks Asset Bundle, opcional)
+
+O mesmo Job está descrito em código em [`databricks.yml`](databricks.yml) +
+[`resources/job.yml`](resources/job.yml). Um **Asset Bundle** permite criar e atualizar o Job pela
+**Databricks CLI**, versionado no Git, em vez de clicar na interface (boa prática de
+*infraestrutura como código*). O agendamento diário (06:00, Brasília) vem **pausado**.
+
+```bash
+# Instale a Databricks CLI e faça login no seu workspace (abre o navegador):
+databricks auth login --host https://<seu-workspace>.cloud.databricks.com
+databricks bundle validate                       # confere o YAML
+databricks bundle deploy                         # cria/atualiza o Job "[dev seu_usuario] pipeline-industrial"
+databricks bundle run pipeline_industrial        # roda e mostra o resultado
+```
+
+No modo `development`, o bundle envia os arquivos para uma pasta própria e cria um Job com o prefixo
+`[dev ...]`, sem mexer no Job criado pela interface.
+
 ## Relação com o repositório base
 
 | | [pipeline-dados-industriais](https://github.com/DenisPaulo/pipeline-dados-industriais) (base) | Este repositório (V4) |
@@ -108,7 +162,7 @@ Mesma entrada do repositório base (AI4I + simulado com semente 42) ⇒ mesmos n
 | Armazenamento | Parquet + PostgreSQL | Delta Lake no Unity Catalog |
 | Camadas | bruto → staging → intermediate → marts (dbt) | bronze → silver → gold |
 | Qualidade | testes do dbt + freshness + volume | `04_qualidade` com `assert` |
-| Orquestração | Airflow | Job do Databricks (opcional) |
+| Orquestração | Airflow | Job do Databricks (`pipeline-industrial`) |
 
 As regras de limpeza e o modelo estrela são **os mesmos**, para dar para comparar as duas abordagens.
 Faz parte da estratégia de portfólio: um repositório por tecnologia, todos com o mesmo domínio.
