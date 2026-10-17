@@ -10,6 +10,10 @@
 [pipeline-dados-industriais](https://github.com/DenisPaulo/pipeline-dados-industriais), agora resolvido no
 **Databricks** com **PySpark** e **Delta Lake**, na arquitetura **medallion** (bronze → silver → gold).
 
+![Dashboard AI/BI do projeto no Databricks Free Edition](docs/img/dashboard_databricks.png)
+
+*Resultado final: [dashboard AI/BI](#dashboard-aibi) no Databricks sobre as tabelas gold (24.511 leituras, 556 com falha, 2,27%).*
+
 ## Problema
 
 Máquinas têm sensores (temperatura, rotação, torque, desgaste da ferramenta) e às vezes falham.
@@ -173,18 +177,26 @@ e monta gráficos em cima delas, sem instalar nada. As 6 consultas estão em
 
 Com os dados padrão: 24.511 leituras, 556 com falha, **2,27%**, 18 máquinas.
 
+![Dashboard AI/BI publicado no Databricks Free Edition: KPIs, falhas por dia, top 10 máquinas, descartes por motivo e falhas por modo](docs/img/dashboard_databricks.png)
+
+*Dashboard publicado no Databricks Free Edition, lendo as tabelas gold/silver.*
+
 ### Passo a passo
 
 1. Rode antes os notebooks 00 a 03 (ou o Job), para as tabelas existirem.
 2. Menu da esquerda › **Dashboards** › **Create dashboard**. Dê um nome, por exemplo `pipeline-industrial`.
 3. No topo, confira o **SQL warehouse** (no Free Edition há um warehouse serverless pronto para uso).
-4. Aba **Data** › **Create from SQL**. Cole a consulta **[1]** de `dashboards/consultas.sql`, clique em
+4. Aba **Data** › **+ Add SQL dataset**. Cole a consulta **[1]** de `dashboards/consultas.sql`, clique em
    **Run** e renomeie o dataset para `kpis`. Repita para as consultas [2] a [6] (um dataset cada).
-5. Aba **Canvas** › **Add a visualization** (ou o ícone de gráfico na barra de baixo). Clique no
-   espaço do painel, escolha o **Dataset** e o tipo de gráfico da tabela acima, e arraste os campos
-   para X, Y e cor. Para os KPIs, use **Counter** e escolha a coluna (ex.: `taxa_falha_pct`).
-6. Opcional: **Add a text box** para um título, e organize os gráficos arrastando.
-7. **Publish** (canto superior direito). A versão publicada é a que outras pessoas veem.
+5. Vá para a aba do painel, que aparece como **Untitled page** (dê dois cliques para renomear, ex.:
+   `Visão Geral`). Clique em **Add a visualization** (ícone de gráfico na barra de baixo) e clique no
+   espaço do painel para criar o widget.
+6. No painel da direita, escolha o tipo de gráfico da tabela acima. O **dataset** é escolhido ao clicar no
+   **+** do primeiro campo (**X axis** nos gráficos de barra; **Value** no Counter). Depois preencha os
+   outros campos (Y axis, Color). Para os KPIs, use **Counter** e escolha a coluna (ex.: `taxa_falha_pct`).
+   Dica: em `falhas_por_dia`, se o eixo X agrupar por mês, troque a granularidade da data para **Day**.
+7. Opcional: **Add a text box** para um título, e organize os gráficos arrastando.
+8. **Publish** (canto superior direito). A versão publicada é a que outras pessoas veem.
 
 ### Atualizar o dashboard pelo Job
 
