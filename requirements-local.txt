@@ -1,0 +1,6 @@
+# Só para rodar os notebooks FORA do Databricks (teste local e CI). No Databricks não precisa.
+pyspark==4.0.1
+delta-spark==4.0.0
+pandas==2.2.3
+numpy==2.2.6
+ruff==0.16.9
