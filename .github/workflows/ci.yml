@@ -9,7 +9,7 @@ on:
 
 jobs:
   notebooks-local:
-    # Roda os 5 notebooks com PySpark + Delta Lake locais (sem Databricks) e confere a qualidade.
+    # PySpark + Delta locais: pytest das transformações e os 5 notebooks.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -33,7 +33,23 @@ jobs:
           ruff check .
           ruff format --check .
 
+      - name: Testes das transformações (pytest)
+        run: python -m pytest
+
       - name: Rodar notebooks (00 -> 04)
         env:
           PI_EXIGIR_PARIDADE: "1"
         run: python scripts/rodar_local.py
+
+  imagem-docker:
+    # Imagem com Python 3.12 e JDK Temurin 21; confere que a JVM sobe o Spark.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build da imagem
+        run: docker build -t pipeline-industrial:ci .
+
+      - name: Conferir Java e PySpark na imagem
+        run: |
+          docker run --rm --entrypoint python pipeline-industrial:ci -c "import os; from pyspark.sql import SparkSession; assert os.environ['JAVA_HOME']; spark = SparkSession.builder.master('local[1]').appName('smoke').config('spark.ui.enabled','false').getOrCreate(); assert spark.range(3).count() == 3; spark.stop()"
