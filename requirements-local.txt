@@ -4,3 +4,4 @@ delta-spark==4.0.0
 pandas==2.2.3
 numpy==2.2.6
 ruff==0.16.9
+pytest==9.2.0

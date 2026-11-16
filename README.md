@@ -45,6 +45,38 @@ flowchart LR
 Todas as tabelas são **Delta** (formato aberto com transações, histórico de versões e `overwrite`
 seguro) e ficam no **Unity Catalog**, em `workspace.industrial`.
 
+## De Hive/HDFS para Databricks + Delta
+
+Em um ambiente Hadoop, as tabelas ficam no **Hive Metastore**: ele guarda o nome, as colunas e o
+caminho dos arquivos, e os arquivos (em geral **Parquet**) ficam no **HDFS**.
+
+A migração para o Databricks registra esses dados como tabelas **Delta Lake** no **Unity Catalog**.
+O Delta Lake mantém arquivos abertos e acrescenta o comportamento de uma tabela transacional:
+
+| Recurso | Para que serve |
+|---|---|
+| **ACID** | Leituras e gravações concorrentes deixam a tabela num estado consistente |
+| **Time travel** | Consultar uma versão anterior, pelo número da versão ou por um horário |
+| **MERGE** | Atualizar as linhas que já existem e inserir as novas na mesma operação |
+| **Histórico** | Ver o que cada gravação alterou |
+
+Neste repositório as tabelas nascem em Delta. O `CREATE TABLE ... USING DELTA` está no notebook
+[`01_bronze`](notebooks/01_bronze.py), na tabela de histórico `cargas`:
+
+```sql
+CREATE TABLE IF NOT EXISTS workspace.industrial.cargas (
+    id_carga STRING,
+    carregado_em TIMESTAMP,
+    linhas_bronze BIGINT,
+    linhas_ai4i BIGINT,
+    linhas_simulado BIGINT
+) USING DELTA
+```
+
+No Databricks, `tabela("cargas")` (definida em [`_config`](notebooks/_config.py)) resolve para
+`workspace.industrial.cargas`. `bronze_leituras`, as tabelas silver e as tabelas gold são gravadas
+com `.format("delta")` nos notebooks `01_bronze`, `02_silver` e `03_gold`.
+
 ## Notebooks
 
 Ficam em [`notebooks/`](notebooks), no formato `.py` do Databricks (`# Databricks notebook source`).
@@ -219,18 +251,191 @@ dashboard: **Schedule** › **Add schedule** (por exemplo, todo dia depois do ho
 As regras de limpeza e o modelo estrela são **os mesmos**, para dar para comparar as duas abordagens.
 Faz parte da estratégia de portfólio: um repositório por tecnologia, todos com o mesmo domínio.
 
-## Teste local (sem Databricks)
+## Teste local com PySpark
 
-O CI roda os 5 notebooks com PySpark + Delta Lake locais, exige os mesmos números do repositório base e executa as consultas do dashboard.
-Para rodar no seu PC (precisa de **Java 17+** e ~1 GB de RAM livre):
+O job `notebooks-local` do CI faz três coisas, nesta ordem: o lint, os testes `pytest` das
+transformações (bronze → silver → gold) e o script `scripts/rodar_local.py`. O script executa os 5
+notebooks com **PySpark 4.0.1** e **Delta Lake**, confere a qualidade e roda as consultas do dashboard.
+O job `imagem-docker` constrói a imagem abaixo e abre uma `SparkSession` dentro dela.
+
+Os testes em [`tests/`](tests) sobem uma `SparkSession` local e atravessam os notebooks `01_bronze`,
+`02_silver` e `03_gold` com um CSV pequeno: uma linha para cada regra de limpeza da silver, mais o
+padrão do AI4I (máquinas virtuais e horário).
+
+No PC as tabelas ficam em `industrial.<nome>`, numa pasta temporária. No Databricks elas ficam no
+Unity Catalog, em `workspace.industrial`.
+
+Requisitos: **Python 3.12**, **JDK 17 ou 21** e cerca de 1 GB de RAM livre para o driver
+(`spark.driver.memory` = `1g`). O CI usa o **Temurin 21**. O PySpark 4.0.1 deste repositório embute
+o **Hadoop 3.4.1**.
+
+### Linux e macOS
 
 ```bash
-python -m venv .venv && source .venv/bin/activate     # Git Bash no Windows: source .venv/Scripts/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-local.txt
+python -m pytest
 python scripts/rodar_local.py
 ```
 
-No local não existe Unity Catalog: as tabelas ficam em `industrial.<nome>` numa pasta temporária.
+### Windows
+
+Instale estes três programas e abra um terminal **novo** (PowerShell ou Git Bash) para eles entrarem
+no `PATH`:
+
+1. **Git para Windows**, que inclui o **Git Bash**: https://git-scm.com/download/win
+2. **Python 3.12**: https://www.python.org/downloads/windows/ — no instalador, marque **Add python.exe to PATH**.
+3. **JDK Temurin 17 ou 21** (o CI usa o 21): https://adoptium.net/temurin/releases/?os=windows&version=21
+   — no instalador, marque **Set JAVA_HOME variable** e **Add to PATH**.
+
+Confira no PowerShell:
+
+```powershell
+git --version
+python --version
+java -version
+echo $env:JAVA_HOME
+```
+
+No Git Bash:
+
+```bash
+git --version
+python --version
+java -version
+echo "$JAVA_HOME"
+```
+
+`python --version` mostra `Python 3.12.x`. `JAVA_HOME` aponta para a pasta do JDK, aquela que contém
+`bin` (em geral `C:\Program Files\Eclipse Adoptium\jdk-21.<versão>-hotspot`). O `Path` inclui
+`%JAVA_HOME%\bin`.
+
+Se `JAVA_HOME` estiver vazio, grave a variável no Windows. O valor vale para o PowerShell e para o
+Git Bash:
+
+1. Tecla Windows, pesquise **variáveis de ambiente** e abra **Editar as variáveis de ambiente do sistema**.
+2. **Variáveis de Ambiente**. Em variáveis do usuário, **Novo**: nome `JAVA_HOME`, valor = a pasta do
+   JDK (o nome real está em `C:\Program Files\Eclipse Adoptium`).
+3. Edite `Path`, **Novo**, `%JAVA_HOME%\bin`.
+
+Para valer só na janela atual, troque `jdk-21.0.x-hotspot` pelo nome da pasta que o instalador criou
+(JDK 17 usa o prefixo `jdk-17`).
+
+PowerShell:
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.x-hotspot'
+$env:Path = "$env:JAVA_HOME\bin;" + $env:Path
+java -version
+```
+
+Git Bash — caminho no formato do Windows, com barra normal. O PySpark no Windows sobe a JVM pelo
+`spark-class.cmd`, que junta `%JAVA_HOME%\bin\java`:
+
+```bash
+export JAVA_HOME="C:/Program Files/Eclipse Adoptium/jdk-21.0.x-hotspot"
+export PATH="$JAVA_HOME/bin:$PATH"
+java -version
+```
+
+Clone e entre na pasta (o mesmo comando nos dois terminais):
+
+```bash
+git clone https://github.com/DenisPaulo/pipeline-industrial-databricks.git
+cd pipeline-industrial-databricks
+```
+
+#### PowerShell
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-local.txt
+python -m pytest
+python scripts/rodar_local.py
+```
+
+Se o PowerShell recusar `Activate.ps1`, libere a execução nesta janela e ative de novo:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+#### Git Bash
+
+Na pasta do repositório (no Git Bash o caminho fica `/c/Users/.../pipeline-industrial-databricks`):
+
+```bash
+python -m venv .venv
+source .venv/Scripts/activate
+pip install -r requirements-local.txt
+python -m pytest
+python scripts/rodar_local.py
+```
+
+O fim esperado do script é a linha `OK: todos os notebooks rodaram localmente.`
+
+#### Problemas comuns no Windows com este PySpark (4.0.1)
+
+**`python` abre a Microsoft Store.** O alias de aplicativo está na frente do Python 3.12. Em
+Configurações → Aplicativos → **Aliases de execução de aplicativo** (no Windows 11 o item fica em
+Configurações avançadas do aplicativo), desligue `python.exe` e `python3.exe`. Abra um terminal novo
+e rode `python --version`.
+
+**`Java not found and JAVA_HOME environment variable is not set.`** Essa frase vem do
+`spark-class2.cmd` do PySpark 4.0.1. `JAVA_HOME` aponta para a pasta do JDK (com `bin` um nível
+abaixo) e o `Path` inclui `%JAVA_HOME%\bin`. Abra um terminal novo depois de gravar as variáveis.
+
+**`HADOOP_HOME and hadoop.home.dir are unset` ou `Failed to find winutils.exe`.** Ao gravar as
+tabelas Delta no disco local, o Hadoop 3.4.1 no Windows ajusta a permissão do arquivo chamando
+`winutils.exe`. O pacote pip traz as bibliotecas Java; o `winutils.exe` é um binário à parte,
+específico do Windows. Use um build de comunidade da linha 3.4, a pasta
+[`hadoop-3.4.0-win10-x64/bin`](https://github.com/kontext-tech/winutils/tree/master/hadoop-3.4.0-win10-x64/bin)
+do repositório kontext-tech/winutils:
+
+1. Crie `C:\hadoop\bin` e copie para lá a pasta `bin` inteira (`winutils.exe`, `hadoop.dll` e os demais arquivos).
+2. Crie a variável de usuário `HADOOP_HOME` com o valor `C:\hadoop`.
+3. Inclua `%HADOOP_HOME%\bin` no `Path`.
+4. Abra um terminal novo. `winutils.exe` responde ao ser chamado.
+
+Se o `winutils.exe` fechar na hora com erro de DLL, instale o
+[Microsoft Visual C++ Redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist)
+(2015–2022, 64 bits).
+
+**`Cannot run program "python3"`.** O valor padrão de `PYSPARK_PYTHON` no PySpark 4.0.1 é o comando
+`python3` (`pyspark/core/context.py`). No Windows o Python e a venv oferecem `python.exe`. O
+`scripts/rodar_local.py` preenche `PYSPARK_PYTHON` e `PYSPARK_DRIVER_PYTHON` com o interpretador que
+rodou o script. Para abrir uma SparkSession direto no interpretador, com a venv já ativada:
+
+PowerShell:
+
+```powershell
+$env:PYSPARK_PYTHON = "$PWD\.venv\Scripts\python.exe"
+$env:PYSPARK_DRIVER_PYTHON = "$PWD\.venv\Scripts\python.exe"
+```
+
+Git Bash:
+
+```bash
+export PYSPARK_PYTHON="$PWD/.venv/Scripts/python.exe"
+export PYSPARK_DRIVER_PYTHON="$PWD/.venv/Scripts/python.exe"
+```
+
+### Docker
+
+Com o [Docker Desktop](https://www.docker.com/products/docker-desktop/) em execução, na pasta do
+repositório. Os comandos são os mesmos no PowerShell e no Git Bash:
+
+```bash
+docker build -t pipeline-industrial .
+docker run --rm pipeline-industrial
+```
+
+A imagem junta Python 3.12 e o JDK Temurin 21. O comando de entrada é `python scripts/rodar_local.py`.
+A variável `PI_EXIGIR_PARIDADE=1` liga a mesma conferência de números do CI. O contêiner usa Linux,
+e o Hadoop grava os arquivos Delta com as permissões do Linux. O script configura
+`spark.driver.memory` em 1 GB.
 
 ## Dados e licença
 

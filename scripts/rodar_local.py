@@ -2,7 +2,7 @@
 
 Não é necessário para usar no Databricks. Serve para conferir a lógica no seu PC ou no CI:
 
-    pip install -r requirements-local.txt      # precisa de Java 17+
+    pip install -r requirements-local.txt      # Java 17 ou 21 (o CI usa Temurin 21)
     python scripts/rodar_local.py
 
 No fim, roda as consultas de dashboards/consultas.sql (cada uma precisa devolver linhas).
@@ -55,10 +55,15 @@ def rodar_consultas(spark) -> None:
         df.show(30, truncate=False)
 
 
-def main() -> None:
-    base = Path(os.environ.get("PI_TMP", tempfile.mkdtemp(prefix="pi-databricks-")))
-    os.environ.setdefault("PI_CATALOGO", "")  # sem Unity Catalog: tabelas em "industrial.<nome>"
-    os.environ.setdefault("PI_PASTA_VOLUME", str(base / "volume"))
+def criar_spark(base: Path):
+    """Spark local com Delta (Java 17 ou 21, ANSI ligado, fuso UTC), igual ao CI.
+
+    O valor padrão de ``PYSPARK_PYTHON`` no PySpark 4.0 é o comando ``python3``.
+    O worker aqui acompanha o interpretador que iniciou este processo
+    (no Windows, o ``python.exe`` da venv).
+    """
+    os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+    os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 
     from delta import configure_spark_with_delta_pip
     from pyspark.sql import SparkSession
@@ -78,19 +83,35 @@ def main() -> None:
     )
     spark = configure_spark_with_delta_pip(construtor).getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
+    return spark
+
+
+def executar_notebooks(spark, nomes: list[str], *, mudar_diretorio: bool = True, mostrar: bool = True) -> None:
+    """Executa os notebooks na ordem recebida, com a SparkSession desta sessão."""
 
     def display(df, n: int = 30):
-        df.show(n, truncate=False)
+        if mostrar:
+            df.show(n, truncate=False)
 
-    os.chdir(PASTA_NOTEBOOKS)
-    sys.path.insert(0, str(PASTA_NOTEBOOKS))
+    if mudar_diretorio:
+        os.chdir(PASTA_NOTEBOOKS)
+        if str(PASTA_NOTEBOOKS) not in sys.path:
+            sys.path.insert(0, str(PASTA_NOTEBOOKS))
+    for nome in nomes:
+        print(f"\n===== {nome} =====", flush=True)
+        escopo = {"spark": spark, "display": display, "__name__": "__notebook__"}
+        for codigo in celulas(PASTA_NOTEBOOKS / f"{nome}.py"):
+            exec(compile(codigo, f"{nome}.py", "exec"), escopo)  # noqa: S102 (código do próprio repo)
+
+
+def main() -> None:
+    base = Path(os.environ.get("PI_TMP", tempfile.mkdtemp(prefix="pi-databricks-")))
+    os.environ.setdefault("PI_CATALOGO", "")  # sem Unity Catalog: tabelas em "industrial.<nome>"
+    os.environ.setdefault("PI_PASTA_VOLUME", str(base / "volume"))
+    spark = criar_spark(base)
     selecionados = sys.argv[1:] or NOTEBOOKS
     try:
-        for nome in selecionados:
-            print(f"\n===== {nome} =====", flush=True)
-            escopo = {"spark": spark, "display": display, "__name__": "__notebook__"}
-            for codigo in celulas(PASTA_NOTEBOOKS / f"{nome}.py"):
-                exec(compile(codigo, f"{nome}.py", "exec"), escopo)  # noqa: S102 (código do próprio repo)
+        executar_notebooks(spark, selecionados)
         rodar_consultas(spark)
     finally:
         spark.stop()
